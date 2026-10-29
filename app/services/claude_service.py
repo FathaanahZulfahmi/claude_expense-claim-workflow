@@ -36,20 +36,39 @@ class ClaudeStructuredResult(Generic[StructuredModel]):
 
 class ClaudeService:
     def __init__(self) -> None:
+        # Read settings (loaded from environment / .env) once at construction.
         settings = get_settings()
 
-        # The key is optional in Settings, so check it here, right before use.
+        # Fail early with a clear message if the key was never provided.
         if settings.anthropic_api_key is None:
-            raise ClaudeConfigurationError("ANTHROPIC_API_KEY is not configured.")
+            raise ClaudeConfigurationError(
+                "ANTHROPIC_API_KEY is not configured."
+            )
 
-        api_key = settings.anthropic_api_key.get_secret_value().strip()
+        # The key is stored as a Pydantic SecretStr so it is hidden in logs
+        # and reprs; get_secret_value() reveals it only here, where it is used.
+        api_key = (
+            settings.anthropic_api_key
+            .get_secret_value()
+            .strip()
+        )
+
+        # A key that is only whitespace passes the None check above, so
+        # guard against it separately.
         if not api_key:
-            raise ClaudeConfigurationError("ANTHROPIC_API_KEY is empty.")
+            raise ClaudeConfigurationError(
+                "ANTHROPIC_API_KEY is empty."
+            )
 
         if not settings.claude_model:
-            raise ClaudeConfigurationError("CLAUDE_MODEL is not configured.")
+            raise ClaudeConfigurationError(
+                "CLAUDE_MODEL is not configured."
+            )
 
         self.model = settings.claude_model
+
+        # Async client so FastAPI's event loop is not blocked while waiting
+        # for Claude. Timeout and retry behaviour come from settings.
         self.client = AsyncAnthropic(
             api_key=api_key,
             timeout=settings.claude_timeout_seconds,
@@ -61,29 +80,51 @@ class ClaudeService:
         user_message: str,
         *,
         output_model: type[StructuredModel],
-        system: str,
         max_tokens: int = 500,
+        system: str | None = None,
     ) -> ClaudeStructuredResult[StructuredModel]:
-        # system = the application's instructions; user_message = untrusted
-        # input. Sending them in separate fields keeps them apart.
+        # Ask Claude for a reply and parse it into a Pydantic model.
+        # output_model is the Pydantic model class the reply must match.
+        # user_message / system / max_tokens work as in generate_text.
+
+        # Same request shape as generate_text, plus output_format, which
+        # tells the SDK which schema to request and parse the reply into.
+        request = {
+            "model": self.model,
+            "max_tokens": max_tokens,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": user_message,
+                }
+            ],
+            "output_format": output_model,
+        }
+
+        if system:
+            request["system"] = system
+
         try:
-            # messages.parse requests output matching output_model's schema
-            # and validates the reply against it in one step.
+            # messages.parse sends the request and validates the reply
+            # against output_model in one step.
             message = await self.client.messages.parse(
-                model=self.model,
-                max_tokens=max_tokens,
-                system=system,
-                messages=[{"role": "user", "content": user_message}],
-                output_format=output_model,
+                **request
             )
         except ValidationError as exc:
-            # The reply broke our rules: never treat it as application data.
-            raise ClaudeResponseError("Claude output failed validation.") from exc
+            # The reply did not match the schema: never treat it as valid
+            # application data. Re-raise as our own error type.
+            raise ClaudeResponseError(
+                "Claude structured output failed application validation"
+            ) from exc
 
-        # None when nothing could be parsed (e.g. cut off or refused).
+        # parsed_output is None when nothing could be parsed (for example,
+        # the response was cut off or refused), so check before using it.
         if message.parsed_output is None:
-            raise ClaudeResponseError("Claude returned no structured output.")
+            raise ClaudeResponseError(
+                "Claude returned no structured output"
+            )
 
+        # Return only the validated data plus the usage numbers.
         return ClaudeStructuredResult[StructuredModel](
             data=message.parsed_output,
             model=message.model,

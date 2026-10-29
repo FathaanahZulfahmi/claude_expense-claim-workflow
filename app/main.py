@@ -1,5 +1,4 @@
 from contextlib import asynccontextmanager
-
 from fastapi import FastAPI
 
 from app.config import get_settings
@@ -8,7 +7,6 @@ from app.routes import claims
 
 # Load settings once at import time (fails early if a required setting is missing).
 settings = get_settings()
-
 
 # Everything before `yield` runs on startup; everything after runs on shutdown.
 @asynccontextmanager
@@ -21,7 +19,11 @@ async def lifespan(app: FastAPI):
         await close_database()
 
 
-app = FastAPI(title=settings.app_name, version="0.1.0", lifespan=lifespan)
+app = FastAPI(
+    title=settings.app_name,
+    version="0.1.0",
+    lifespan=lifespan
+)
 app.include_router(claims.router)
 
 
