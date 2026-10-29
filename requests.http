@@ -1,0 +1,49 @@
+### TEST GET HEALTH
+GET http://127.0.0.1:8001/health
+
+
+### TEST POST CLAIM
+POST http://127.0.0.1:8001/claims/analyse
+Content-Type: application/json
+
+{
+  "description": "Grab ride from KLIA to the Petronas office on 20 Oct 2026 for the client meeting, RM 85.50"
+}
+
+### TEST POST CLAIM - missing info
+POST http://127.0.0.1:8001/claims/analyse
+Content-Type: application/json
+
+{
+  "description": "Dinner with Client for lunch, RM 350"
+}
+
+### SUBMIT - should auto-approve
+POST http://127.0.0.1:8001/claims/submit
+Content-Type: application/json
+
+{
+  "employee_id": "E001",
+  "description": "Grab ride from KLIA to the Petronas office on 20 Oct 2026 for a client meeting, RM 85.50",
+  "claimed_amount": 85.50
+}
+
+### SUBMIT - over limit
+POST http://127.0.0.1:8001/claims/submit
+Content-Type: application/json
+
+{
+  "employee_id": "E002",
+  "description": "Team dinner at Madam Kwan's on 18 Oct 2026, RM 320",
+  "claimed_amount": 350
+}
+
+### SUBMIT - inactive employee 
+POST http://127.0.0.1:8001/claims/submit
+Content-Type: application/json
+
+{
+  "employee_id": "E003",
+  "description": "Taxi to the airport on 20 Oct 2026, RM 60",
+  "claimed_amount": 60
+}
